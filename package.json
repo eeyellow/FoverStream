@@ -1,0 +1,25 @@
+{
+  "name": "erostream",
+  "version": "1.0.0",
+  "description": "無邊框四視窗串流播放器 (VLC + Streamlink 架構)",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "keywords": [
+    "streamlink",
+    "vlc",
+    "multiview",
+    "quad-stream",
+    "borderless"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "hls.js": "^1.5.20",
+    "mpegts.js": "^1.8.2"
+  },
+  "devDependencies": {
+    "electron": "^41.0.1"
+  }
+}
