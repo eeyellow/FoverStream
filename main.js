@@ -286,6 +286,31 @@ ipcMain.handle('window:isFullScreen', () => {
   return mainWindow ? mainWindow.isFullScreen() : false;
 });
 
+// 設定檔儲存與讀取 (userData/erostream_config.json)
+const configFilePath = path.join(app.getPath('userData'), 'erostream_config.json');
+
+ipcMain.handle('config:save', async (event, data) => {
+  try {
+    await fs.promises.writeFile(configFilePath, JSON.stringify(data, null, 2), 'utf-8');
+    return { success: true };
+  } catch (err) {
+    console.error('儲存設定檔失敗:', err);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('config:load', async () => {
+  try {
+    if (fs.existsSync(configFilePath)) {
+      const content = await fs.promises.readFile(configFilePath, 'utf-8');
+      return JSON.parse(content);
+    }
+  } catch (err) {
+    console.error('讀取設定檔失敗:', err);
+  }
+  return null;
+});
+
 // 核心串流解析與伺服器調度
 ipcMain.handle('streamlink:resolve', async (event, { url, preferredQuality = 'best', slotId = 1 }) => {
   const streamlinkBin = getStreamlinkPath();
@@ -318,6 +343,7 @@ ipcMain.handle('streamlink:resolve', async (event, { url, preferredQuality = 'be
               metadata: { title: url, author: '' },
               streams: { [preferredQuality]: { type: 'mpegts' } },
               qualities: [preferredQuality],
+              chosenQuality: preferredQuality,
               playType: 'mpegts',
               directUrl: serverRes.serverUrl,
               needsServer: true
@@ -355,6 +381,7 @@ ipcMain.handle('streamlink:resolve', async (event, { url, preferredQuality = 'be
               plugin: parsed.plugin || '',
               streams: parsed.streams,
               qualities,
+              chosenQuality,
               playType: 'hls',
               directUrl: targetStream.url,
               needsServer: false
@@ -372,6 +399,7 @@ ipcMain.handle('streamlink:resolve', async (event, { url, preferredQuality = 'be
               plugin: parsed.plugin || '',
               streams: parsed.streams,
               qualities,
+              chosenQuality,
               playType: 'mpegts',
               directUrl: serverRes.serverUrl,
               needsServer: true

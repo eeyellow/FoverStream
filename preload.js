@@ -42,5 +42,9 @@ contextBridge.exposeInMainWorld('api', {
   getYouTubeMeta: (url) => ipcRenderer.invoke('youtube:getMeta', url),
 
   // 外部 VLC 播放
-  openInVlc: (options) => ipcRenderer.invoke('vlc:open', options)
+  openInVlc: (options) => ipcRenderer.invoke('vlc:open', options),
+
+  // 設定持久化 (userData JSON 檔案儲存)
+  saveConfig: (data) => ipcRenderer.invoke('config:save', data),
+  loadConfig: () => ipcRenderer.invoke('config:load')
 });

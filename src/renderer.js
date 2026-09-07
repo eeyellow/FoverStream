@@ -30,6 +30,7 @@ class StreamSlot {
     this.urlInput = this.setupView.querySelector('.stream-url-input');
     this.playBtn = this.setupView.querySelector('.btn-play-stream');
     this.browseWebBtn = this.setupView.querySelector('.btn-browse-web');
+    this.cancelSetupBtn = this.setupView.querySelector('.btn-cancel-setup');
     this.titleEl = this.container.querySelector('.stream-title');
     this.qualitySelect = this.container.querySelector('.quality-select');
     this.playPauseBtn = this.container.querySelector('.play-pause-btn');
@@ -38,6 +39,8 @@ class StreamSlot {
     this.webFwdBtn = this.container.querySelector('.web-forward-btn');
     this.muteBtn = this.container.querySelector('.mute-btn');
     this.volSlider = this.container.querySelector('.vol-slider');
+    this.badge = this.container.querySelector('.slot-badge');
+    this.primaryBtn = this.container.querySelector('.primary-btn');
     this.audioSoloBtn = this.container.querySelector('.audio-solo-btn');
     this.vlcBtn = this.container.querySelector('.vlc-btn');
     this.editBtn = this.container.querySelector('.edit-btn');
@@ -76,6 +79,24 @@ class StreamSlot {
       });
     }
 
+    if (this.badge) {
+      this.badge.addEventListener('click', () => {
+        this.manager.setPrimarySlot(this.slotNumber);
+        if (this.manager.audioFocusFollow && this.originalUrl) {
+          this.manager.soloAudio(this.slotNumber);
+        }
+      });
+    }
+
+    if (this.primaryBtn) {
+      this.primaryBtn.addEventListener('click', () => {
+        this.manager.setPrimarySlot(this.slotNumber);
+        if (this.manager.audioFocusFollow && this.originalUrl) {
+          this.manager.soloAudio(this.slotNumber);
+        }
+      });
+    }
+
     if (this.webBackBtn) {
       this.webBackBtn.addEventListener('click', () => {
         if (this.ytWebview && this.ytWebview.canGoBack()) {
@@ -96,7 +117,28 @@ class StreamSlot {
       if (e.key === 'Enter') {
         const url = this.urlInput.value.trim();
         if (url) this.load(url);
+      } else if (e.key === 'Escape') {
+        e.stopPropagation();
+        this.hideSetup();
       }
+    });
+
+    if (this.cancelSetupBtn) {
+      this.cancelSetupBtn.addEventListener('click', () => {
+        this.hideSetup();
+      });
+    }
+
+    this.setupView.addEventListener('click', (e) => {
+      if (e.target === this.setupView && this.originalUrl) {
+        this.hideSetup();
+      }
+    });
+
+    this.urlInput.addEventListener('focus', () => {
+      setTimeout(() => {
+        this.urlInput.select();
+      }, 0);
     });
 
     // 快速範例與貼上
@@ -214,10 +256,79 @@ class StreamSlot {
     }
   }
 
+  findBestMatchingQuality(targetType) {
+    if (!this.streamsMap || Object.keys(this.streamsMap).length === 0) return 'best';
+    const available = Object.keys(this.streamsMap).filter(
+      (q) => q !== 'audio_only' && !q.includes('audio')
+    );
+    if (available.length === 0) return 'best';
+
+    if (targetType === 'high') {
+      // 焦點主畫面：優先選 best / 1080p 最高解析度
+      if (this.streamsMap['best']) return 'best';
+      const highPref = ['1080p60', '1080p', '720p60', '720p'];
+      for (const q of highPref) {
+        if (this.streamsMap[q]) return q;
+      }
+      return available[0];
+    }
+
+    if (targetType === 'low') {
+      // 流量集中給主台：副台自動降級為 480p / 360p 省頻寬
+      const lowPref = ['480p', '480p30', '480p60', '360p', '360p30', 'worst'];
+      for (const q of lowPref) {
+        if (this.streamsMap[q] && q !== 'audio_only') return q;
+      }
+      const candidate = available.find((q) => /480|360/i.test(q));
+      if (candidate) return candidate;
+      return available[available.length - 1] || '480p';
+    }
+
+    if (targetType === 'grid') {
+      const pref = this.manager.preferredGridQuality || '720p';
+      if (this.streamsMap[pref]) return pref;
+      if (pref === '720p') {
+        const gPref = ['720p', '720p60', '480p', 'best'];
+        for (const q of gPref) {
+          if (this.streamsMap[q]) return q;
+        }
+      }
+      return available[0];
+    }
+
+    return 'best';
+  }
+
+  async applyQualityMode(mode) {
+    if (!this.originalUrl || this.playType === 'webpage') return;
+
+    if (this.playType === 'youtube') {
+      const qMap = { high: 'hd1080', low: 'small', grid: 'medium' };
+      const ytQ = qMap[mode] || 'hd720';
+      if (this.ytWebview) {
+        this.ytWebview.executeJavaScript(`
+          (() => {
+            const mp = document.getElementById('movie_player');
+            if (mp && mp.setPlaybackQualityRange) {
+              mp.setPlaybackQualityRange('${ytQ}', '${ytQ}');
+            }
+          })()
+        `).catch(() => {});
+      }
+      return;
+    }
+
+    const targetQuality = this.findBestMatchingQuality(mode);
+    if (targetQuality && targetQuality !== this.currentQuality) {
+      await this.changeQualityTo(targetQuality);
+    }
+  }
+
   async load(url, preferredQuality = null, forceWebMode = false) {
     url = formatUrl(url);
     this.originalUrl = url;
     this.urlInput.value = url;
+    this.manager.saveState();
 
     // 強制以網頁瀏覽器模式開啟
     if (forceWebMode) {
@@ -225,6 +336,8 @@ class StreamSlot {
       this.manager.saveState();
       return;
     }
+
+    const desiredMode = this.manager.getDesiredQualityModeForSlot(this.slotNumber);
 
     // 0. 若為 YouTube 網址，直接啟用原生 YouTube 播放核心 (支援所有 1080p/4K、動畫番劇與實況)
     const ytId = extractYouTubeId(url);
@@ -234,7 +347,12 @@ class StreamSlot {
       return;
     }
 
-    const targetQ = preferredQuality || this.manager.preferredGridQuality || '720p';
+    let targetQ = preferredQuality;
+    if (!targetQ) {
+      if (desiredMode === 'high') targetQ = 'best';
+      else if (desiredMode === 'low') targetQ = '480p';
+      else targetQ = this.manager.preferredGridQuality || '720p';
+    }
     this.currentQuality = targetQ;
     this.showLoader('Streamlink 解析串流網址中...');
 
@@ -267,13 +385,16 @@ class StreamSlot {
       this.streamsMap = res.streams || {};
       const qualities = res.qualities || Object.keys(this.streamsMap);
 
+      const actualTargetQ = this.findBestMatchingQuality(desiredMode);
+      this.currentQuality = actualTargetQ;
+
       // 更新畫質選單
       this.qualitySelect.innerHTML = '';
       qualities.forEach((q) => {
         const opt = document.createElement('option');
         opt.value = q;
         opt.textContent = q;
-        if (q === targetQ || (targetQ === 'best' && q === 'best')) {
+        if (q === actualTargetQ) {
           opt.selected = true;
         }
         this.qualitySelect.appendChild(opt);
@@ -288,11 +409,17 @@ class StreamSlot {
       this.playType = res.playType;
 
       if (res.playType === 'mpegts') {
-        // Chaturbate 等 hls-multi / segmented 串流，透過本機 MPEG-TS 伺服器播放
-        this.playMpegts(res.directUrl);
+        if (res.chosenQuality && res.chosenQuality !== actualTargetQ && this.streamsMap[actualTargetQ]) {
+          await this.changeQualityTo(actualTargetQ);
+        } else {
+          this.playMpegts(res.directUrl);
+        }
       } else {
         // Direct HLS
-        this.playDirectHls(res.directUrl);
+        const targetUrl = this.streamsMap[actualTargetQ]
+          ? (typeof this.streamsMap[actualTargetQ] === 'string' ? this.streamsMap[actualTargetQ] : this.streamsMap[actualTargetQ].url)
+          : res.directUrl;
+        this.playDirectHls(targetUrl || res.directUrl);
       }
 
       this.manager.saveState();
@@ -412,6 +539,9 @@ class StreamSlot {
         if (webview.setAudioMuted) {
           webview.setAudioMuted(this.isMuted);
         }
+
+        const desiredMode = this.manager.getDesiredQualityModeForSlot(this.slotNumber);
+        this.applyQualityMode(desiredMode);
       } catch (err) {
         console.warn('Webview 初始化注入警告:', err);
       }
@@ -744,10 +874,33 @@ class StreamSlot {
   }
 
   showSetup() {
-    this.destroyPlayers(true);
+    // 保留目前背景播放之串流（不銷毀），允許隨時取消返回原畫面
     this.setupView.classList.remove('hidden');
     this.loaderView.classList.add('hidden');
     this.errorView.classList.add('hidden');
+
+    if (this.cancelSetupBtn) {
+      this.cancelSetupBtn.classList.toggle('hidden', !this.originalUrl);
+    }
+
+    if (this.urlInput) {
+      if (this.originalUrl) {
+        this.urlInput.value = this.originalUrl;
+      }
+      setTimeout(() => {
+        this.urlInput.focus();
+        this.urlInput.select();
+      }, 50);
+    }
+  }
+
+  hideSetup() {
+    if (!this.originalUrl) return;
+    this.setupView.classList.add('hidden');
+    if (this.cancelSetupBtn) {
+      this.cancelSetupBtn.classList.add('hidden');
+    }
+    this.urlInput.value = this.originalUrl;
   }
 
   showLoader(text = 'Streamlink 解析中...') {
@@ -768,6 +921,9 @@ class StreamSlot {
     this.setupView.classList.add('hidden');
     this.loaderView.classList.add('hidden');
     this.errorView.classList.add('hidden');
+    if (this.cancelSetupBtn) {
+      this.cancelSetupBtn.classList.add('hidden');
+    }
   }
 }
 
@@ -778,6 +934,9 @@ class StreamManager {
     this.audioFocusFollow = true;
     this.isMasterMuted = false;
     this.activeSoloSlot = null;
+    this.currentLayout = '2x2';
+    this.primarySlot = 1;
+    this.isInitialized = false;
 
     this.init();
   }
@@ -789,7 +948,14 @@ class StreamManager {
 
     document.getElementById('minBtn').addEventListener('click', () => window.api.window.minimize());
     document.getElementById('maxBtn').addEventListener('click', () => window.api.window.toggleMaximize());
-    document.getElementById('closeBtn').addEventListener('click', () => window.api.window.close());
+    document.getElementById('closeBtn').addEventListener('click', () => {
+      this.saveState();
+      window.api.window.close();
+    });
+
+    window.addEventListener('beforeunload', () => {
+      this.saveState();
+    });
 
     const fullscreenBtn = document.getElementById('fullscreenBtn');
     fullscreenBtn.addEventListener('click', () => {
@@ -817,23 +983,29 @@ class StreamManager {
       console.warn(`[Main] Slot ${slotId} 伺服器已結束`);
     });
 
-    const container = document.getElementById('playerContainer');
+    // 快捷佈局切換綁定
     const layout2x2 = document.getElementById('layout2x2');
     const layout1p3 = document.getElementById('layout1p3');
+    const layoutTop1p3 = document.getElementById('layoutTop1p3');
+    const layoutBottom1p3 = document.getElementById('layoutBottom1p3');
 
-    layout2x2.addEventListener('click', () => {
-      container.className = 'grid-container mode-2x2';
-      layout2x2.classList.add('active');
-      layout1p3.classList.remove('active');
-      this.exitSolo();
-    });
+    if (layout2x2) layout2x2.addEventListener('click', () => this.setLayout('2x2'));
+    if (layout1p3) layout1p3.addEventListener('click', () => this.setLayout('1p3'));
+    if (layoutTop1p3) layoutTop1p3.addEventListener('click', () => this.setLayout('top1p3'));
+    if (layoutBottom1p3) layoutBottom1p3.addEventListener('click', () => this.setLayout('bottom1p3'));
 
-    layout1p3.addEventListener('click', () => {
-      container.className = 'grid-container mode-1p3';
-      layout1p3.classList.add('active');
-      layout2x2.classList.remove('active');
-      this.exitSolo();
-    });
+    // 快速鍵說明面板綁定
+    const helpBtn = document.getElementById('helpBtn');
+    const closeHelpBtn = document.getElementById('closeHelpBtn');
+    const helpModal = document.getElementById('helpModal');
+
+    if (helpBtn) helpBtn.addEventListener('click', () => this.toggleHelpModal());
+    if (closeHelpBtn) closeHelpBtn.addEventListener('click', () => this.toggleHelpModal(false));
+    if (helpModal) {
+      helpModal.addEventListener('click', (e) => {
+        if (e.target === helpModal) this.toggleHelpModal(false);
+      });
+    }
 
     // 4. 四分割畫質策略監聽
     this.preferredGridQuality = '720p';
@@ -842,13 +1014,9 @@ class StreamManager {
       this.preferredGridQuality = gridQualitySelect.value;
       gridQualitySelect.addEventListener('change', (e) => {
         this.preferredGridQuality = e.target.value;
-        // 若非 Solo 狀態，即時切換所有已連線槽位之畫質
-        if (!this.activeSoloSlot) {
-          this.slots.forEach((s) => {
-            if (s.originalUrl) {
-              s.changeQualityTo(this.preferredGridQuality);
-            }
-          });
+        // 若在 2x2 模式且非 Solo，套用新的四分割畫質
+        if (!this.activeSoloSlot && this.currentLayout === '2x2') {
+          this.applySmartQualityStrategy();
         }
       });
     }
@@ -875,7 +1043,100 @@ class StreamManager {
 
     this.bindHotkeys();
     this.checkEnvironment();
-    this.loadState();
+    await this.loadState();
+  }
+
+  setLayout(mode) {
+    const validModes = ['2x2', '1p3', 'top1p3', 'bottom1p3'];
+    if (!validModes.includes(mode)) mode = '2x2';
+    this.currentLayout = mode;
+
+    const container = document.getElementById('playerContainer');
+    container.className = `grid-container mode-${mode}`;
+
+    const btnMap = {
+      '2x2': document.getElementById('layout2x2'),
+      '1p3': document.getElementById('layout1p3'),
+      'top1p3': document.getElementById('layoutTop1p3'),
+      'bottom1p3': document.getElementById('layoutBottom1p3')
+    };
+
+    Object.entries(btnMap).forEach(([k, btn]) => {
+      if (btn) btn.classList.toggle('active', k === mode);
+    });
+
+    if (this.activeSoloSlot) {
+      this.exitSolo();
+    }
+    this.applySmartQualityStrategy();
+    this.saveState();
+  }
+
+  cycleLayout() {
+    const modes = ['2x2', '1p3', 'top1p3', 'bottom1p3'];
+    const idx = modes.indexOf(this.currentLayout || '2x2');
+    const next = modes[(idx + 1) % modes.length];
+    this.setLayout(next);
+  }
+
+  setPrimarySlot(slotNum) {
+    if (slotNum < 1 || slotNum > 4) return;
+    this.primarySlot = slotNum;
+    this.slots.forEach((s) => {
+      s.container.classList.toggle('is-primary', s.slotNumber === slotNum);
+    });
+    // 處於 1+3 焦點模式且未在 Solo 狀態時，動態調配焦點主台與副台畫質
+    if (!this.activeSoloSlot && ['1p3', 'top1p3', 'bottom1p3'].includes(this.currentLayout)) {
+      this.applySmartQualityStrategy();
+    }
+    this.saveState();
+  }
+
+  cyclePrimarySlot() {
+    const next = (this.primarySlot % 4) + 1;
+    this.setPrimarySlot(next);
+    if (this.audioFocusFollow && this.slots[next - 1].originalUrl) {
+      this.soloAudio(next);
+    }
+  }
+
+  getDesiredQualityModeForSlot(slotNum) {
+    // Solo 全螢幕模式：Solo 台為 high，其餘 3 台降為 low
+    if (this.activeSoloSlot) {
+      return slotNum === this.activeSoloSlot ? 'high' : 'low';
+    }
+    // 1+3 焦點模式 (左/上/下)：焦點主台為 high，其餘 3 台降為 low
+    if (['1p3', 'top1p3', 'bottom1p3'].includes(this.currentLayout)) {
+      return slotNum === this.primarySlot ? 'high' : 'low';
+    }
+    // 2x2 四等分模式：全體均衡畫質 (720p)
+    return 'grid';
+  }
+
+  applySmartQualityStrategy() {
+    this.slots.forEach((s) => {
+      const mode = this.getDesiredQualityModeForSlot(s.slotNumber);
+      s.applyQualityMode(mode);
+    });
+  }
+
+  toggleHelpModal(show) {
+    const modal = document.getElementById('helpModal');
+    if (!modal) return;
+    const isHidden = modal.classList.contains('hidden');
+    const shouldShow = show !== undefined ? show : isHidden;
+    modal.classList.toggle('hidden', !shouldShow);
+  }
+
+  adjustVolume(delta) {
+    if (this.activeSoloSlot) {
+      const slot = this.slots[this.activeSoloSlot - 1];
+      if (slot) slot.setVolume(slot.volume + delta);
+    } else {
+      this.slots.forEach((s) => {
+        s.setVolume(s.volume + delta);
+      });
+    }
   }
 
   soloAudio(targetSlotNum) {
@@ -902,33 +1163,42 @@ class StreamManager {
 
   toggleSoloSlot(slotNum) {
     const slot = this.slots[slotNum - 1];
+    const container = document.getElementById('playerContainer');
     if (this.activeSoloSlot === slotNum) {
       this.exitSolo();
     } else {
-      this.slots.forEach((s) => s.container.classList.remove('solo'));
+      this.slots.forEach((s) => {
+        s.container.classList.remove('solo');
+        if (s.soloBtn) {
+          s.soloBtn.textContent = '⛶';
+          s.soloBtn.title = '單一放大全螢幕 (雙擊畫面亦可)';
+        }
+      });
       slot.container.classList.add('solo');
+      if (container) container.classList.add('has-solo');
+      if (slot.soloBtn) {
+        slot.soloBtn.textContent = '🗗';
+        slot.soloBtn.title = '還原佈局 (Esc / 雙擊畫面)';
+      }
       this.activeSoloSlot = slotNum;
       this.soloAudio(slotNum);
-
-      // 放大時自動無感升級至最高畫質 (1080p / best)
-      slot.savedGridQuality = slot.currentQuality;
-      const bestQ = slot.streamsMap['best'] ? 'best' : (slot.streamsMap['1080p'] ? '1080p' : null);
-      if (bestQ && slot.currentQuality !== bestQ) {
-        slot.changeQualityTo(bestQ);
-      }
+      this.applySmartQualityStrategy();
     }
   }
 
   exitSolo() {
-    if (this.activeSoloSlot) {
-      const slot = this.slots[this.activeSoloSlot - 1];
-      if (slot && slot.savedGridQuality && slot.currentQuality !== slot.savedGridQuality) {
-        // 縮回四分割時自動降回流暢畫質，節省頻寬與解碼負擔
-        slot.changeQualityTo(slot.savedGridQuality);
+    if (!this.activeSoloSlot) return;
+    const container = document.getElementById('playerContainer');
+    if (container) container.classList.remove('has-solo');
+    this.slots.forEach((s) => {
+      s.container.classList.remove('solo');
+      if (s.soloBtn) {
+        s.soloBtn.textContent = '⛶';
+        s.soloBtn.title = '單一放大全螢幕 (雙擊畫面亦可)';
       }
-    }
-    this.slots.forEach((s) => s.container.classList.remove('solo'));
+    });
     this.activeSoloSlot = null;
+    this.applySmartQualityStrategy();
   }
 
   async toggleFullScreen() {
@@ -947,37 +1217,141 @@ class StreamManager {
 
       const key = e.key;
 
+      // 1. 數字快捷鍵 (1~4)
       if (['1', '2', '3', '4'].includes(key)) {
-        if (e.altKey) {
+        if (e.ctrlKey) {
+          // Ctrl + 1~4 將指定台設為焦點大主畫面 (上/左/下)
+          this.setPrimarySlot(parseInt(key, 10));
+          if (this.audioFocusFollow && this.slots[parseInt(key, 10) - 1].originalUrl) {
+            this.soloAudio(parseInt(key, 10));
+          }
+        } else if (e.shiftKey) {
+          // Shift + 1~4 切換佈局
+          const layoutMap = { '1': '2x2', '2': '1p3', '3': 'top1p3', '4': 'bottom1p3' };
+          this.setLayout(layoutMap[key]);
+        } else if (e.altKey) {
+          // Alt + 1~4 獨播指定台音訊
           this.soloAudio(parseInt(key, 10));
         } else {
+          // 1~4 單台放大 (Solo) / 復原
           this.toggleSoloSlot(parseInt(key, 10));
         }
+        return;
       }
 
+      // Tab: 輪替主畫面焦點 (台1 -> 台2 -> 台3 -> 台4)
+      if (key === 'Tab') {
+        e.preventDefault();
+        this.cyclePrimarySlot();
+        return;
+      }
+
+      // 2. 佈局輪播 (L)
+      if (key === 'l' || key === 'L') {
+        this.cycleLayout();
+        return;
+      }
+
+      // 3. 快速鍵說明面板 (? 或 H 或 F1)
+      if (key === '?' || key === 'h' || key === 'H' || key === 'F1') {
+        e.preventDefault();
+        this.toggleHelpModal();
+        return;
+      }
+
+      // 4. 音訊焦點切換 (A)
+      if (key === 'a' || key === 'A') {
+        const audioFocusBtn = document.getElementById('audioFocusToggle');
+        if (audioFocusBtn) audioFocusBtn.click();
+        return;
+      }
+
+      // 5. 重新載入所有台 (R)
+      if ((key === 'r' || key === 'R') && !e.ctrlKey) {
+        this.slots.forEach((s) => s.reload());
+        return;
+      }
+
+      // 6. 儲存設定 (S)
+      if ((key === 's' || key === 'S') && !e.ctrlKey) {
+        this.saveState();
+        const saveBtn = document.getElementById('savePresetBtn');
+        if (saveBtn) {
+          const old = saveBtn.textContent;
+          saveBtn.textContent = '✓ 已儲存';
+          setTimeout(() => { saveBtn.textContent = old; }, 1200);
+        }
+        return;
+      }
+
+      // 7. 空白鍵播放 / 暫停焦點台
+      if (e.code === 'Space') {
+        e.preventDefault();
+        if (this.activeSoloSlot) {
+          this.slots[this.activeSoloSlot - 1].togglePlay();
+        } else {
+          const activeSlot = this.slots.find((s) => !s.isMuted && s.originalUrl) || this.slots[0];
+          if (activeSlot) activeSlot.togglePlay();
+        }
+        return;
+      }
+
+      // 8. 音量快速調節 (方向鍵上下)
+      if (key === 'ArrowUp') {
+        e.preventDefault();
+        this.adjustVolume(0.1);
+        return;
+      }
+      if (key === 'ArrowDown') {
+        e.preventDefault();
+        this.adjustVolume(-0.1);
+        return;
+      }
+
+      // 9. 退出全螢幕 / Solo / 關閉彈窗 / 取消換台 (Escape)
       if (key === 'Escape') {
+        const modal = document.getElementById('helpModal');
+        if (modal && !modal.classList.contains('hidden')) {
+          this.toggleHelpModal(false);
+          return;
+        }
+
+        // 若有任何槽位正在顯示換台畫面且原本已有串流，優先取消換台返回
+        const activeSetupSlot = this.slots.find(
+          (s) => !s.setupView.classList.contains('hidden') && s.originalUrl
+        );
+        if (activeSetupSlot) {
+          activeSetupSlot.hideSetup();
+          return;
+        }
+
         if (document.body.classList.contains('is-fullscreen')) {
           this.toggleFullScreen();
         } else {
           this.exitSolo();
         }
+        return;
       }
 
       if (key === 'F11') {
         e.preventDefault();
         this.toggleFullScreen();
+        return;
       }
 
       if (key === 'f' || key === 'F') {
         this.toggleFullScreen();
+        return;
       }
 
       if (key === 'm' || key === 'M') {
         this.toggleMasterMute();
+        return;
       }
 
       if (key === 't' || key === 'T') {
         document.getElementById('alwaysOnTopBtn').click();
+        return;
       }
     });
   }
@@ -1010,21 +1384,55 @@ class StreamManager {
   }
 
   saveState() {
+    if (!this.isInitialized) return;
     const data = {
+      layout: this.currentLayout || '2x2',
+      primarySlot: this.primarySlot || 1,
+      preferredGridQuality: this.preferredGridQuality || '720p',
       slots: this.slots.map((s) => ({
-        url: s.originalUrl,
+        url: s.originalUrl || '',
         volume: s.volume,
         playType: s.playType
       }))
     };
-    localStorage.setItem('erostream_config', JSON.stringify(data));
+    try {
+      localStorage.setItem('erostream_config', JSON.stringify(data));
+      if (window.api && window.api.saveConfig) {
+        window.api.saveConfig(data);
+      }
+    } catch (e) {
+      console.error('儲存設定失敗:', e);
+    }
   }
 
-  loadState() {
+  async loadState() {
     try {
-      const raw = localStorage.getItem('erostream_config');
-      if (!raw) return;
-      const data = JSON.parse(raw);
+      let data = null;
+      if (window.api && window.api.loadConfig) {
+        data = await window.api.loadConfig();
+      }
+      if (!data) {
+        const raw = localStorage.getItem('erostream_config');
+        if (raw) data = JSON.parse(raw);
+      }
+      if (!data) {
+        this.setPrimarySlot(1);
+        return;
+      }
+
+      if (data.layout) {
+        this.setLayout(data.layout);
+      }
+      if (data.primarySlot) {
+        this.setPrimarySlot(data.primarySlot);
+      } else {
+        this.setPrimarySlot(1);
+      }
+      if (data.preferredGridQuality) {
+        this.preferredGridQuality = data.preferredGridQuality;
+        const gridQualitySelect = document.getElementById('gridQualitySelect');
+        if (gridQualitySelect) gridQualitySelect.value = data.preferredGridQuality;
+      }
       if (data.slots && Array.isArray(data.slots)) {
         data.slots.forEach((item, idx) => {
           if (this.slots[idx] && item.url) {
@@ -1040,6 +1448,8 @@ class StreamManager {
       }
     } catch (e) {
       console.error('載入設定失敗:', e);
+    } finally {
+      this.isInitialized = true;
     }
   }
 }
