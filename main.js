@@ -297,6 +297,19 @@ ipcMain.handle('streamlink:resolve', async (event, { url, preferredQuality = 'be
       { timeout: 20000, maxBuffer: 10 * 1024 * 1024 },
       async (err, stdout, stderr) => {
         if (err) {
+          const outStr = (stdout || '') + (stderr || '') + (err.message || '');
+          if (
+            outStr.includes('No plugin can handle URL') ||
+            outStr.includes('No playable streams found')
+          ) {
+            resolve({
+              success: false,
+              isNotStream: true,
+              error: '非串流平台網址'
+            });
+            return;
+          }
+
           // 若 --json 失敗，嘗試啟動本機伺服器直連
           const serverRes = await startSlotServer(slotId, url, preferredQuality);
           if (serverRes.success) {

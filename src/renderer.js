@@ -1,4 +1,11 @@
-// EroStream - Renderer Process (支援 direct HLS + 本機 MPEG-TS + YouTube 原生三引擎)
+// EroStream - Renderer Process (支援 direct HLS + 本機 MPEG-TS + YouTube 原生 + 網頁瀏覽器模式)
+
+function formatUrl(url) {
+  if (!url) return '';
+  const trimmed = url.trim();
+  if (/^[a-zA-Z]+:\/\//.test(trimmed)) return trimmed;
+  return `https://${trimmed}`;
+}
 
 function extractYouTubeId(url) {
   if (!url) return null;
@@ -22,10 +29,13 @@ class StreamSlot {
     // 控制元件
     this.urlInput = this.setupView.querySelector('.stream-url-input');
     this.playBtn = this.setupView.querySelector('.btn-play-stream');
+    this.browseWebBtn = this.setupView.querySelector('.btn-browse-web');
     this.titleEl = this.container.querySelector('.stream-title');
     this.qualitySelect = this.container.querySelector('.quality-select');
     this.playPauseBtn = this.container.querySelector('.play-pause-btn');
     this.refreshBtn = this.container.querySelector('.refresh-btn');
+    this.webBackBtn = this.container.querySelector('.web-back-btn');
+    this.webFwdBtn = this.container.querySelector('.web-forward-btn');
     this.muteBtn = this.container.querySelector('.mute-btn');
     this.volSlider = this.container.querySelector('.vol-slider');
     this.audioSoloBtn = this.container.querySelector('.audio-solo-btn');
@@ -39,7 +49,7 @@ class StreamSlot {
     this.hls = null;
     this.mpegtsPlayer = null;
     this.ytWebview = null;
-    this.playType = null; // 'hls' | 'mpegts' | 'youtube'
+    this.playType = null; // 'hls' | 'mpegts' | 'youtube' | 'webpage'
     this.needsServer = false;
     this.originalUrl = '';
     this.currentDirectUrl = '';
@@ -58,6 +68,29 @@ class StreamSlot {
       const url = this.urlInput.value.trim();
       if (url) this.load(url);
     });
+
+    if (this.browseWebBtn) {
+      this.browseWebBtn.addEventListener('click', () => {
+        const url = this.urlInput.value.trim();
+        if (url) this.load(url, null, true);
+      });
+    }
+
+    if (this.webBackBtn) {
+      this.webBackBtn.addEventListener('click', () => {
+        if (this.ytWebview && this.ytWebview.canGoBack()) {
+          this.ytWebview.goBack();
+        }
+      });
+    }
+
+    if (this.webFwdBtn) {
+      this.webFwdBtn.addEventListener('click', () => {
+        if (this.ytWebview && this.ytWebview.canGoForward()) {
+          this.ytWebview.goForward();
+        }
+      });
+    }
 
     this.urlInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
@@ -181,9 +214,17 @@ class StreamSlot {
     }
   }
 
-  async load(url, preferredQuality = null) {
+  async load(url, preferredQuality = null, forceWebMode = false) {
+    url = formatUrl(url);
     this.originalUrl = url;
     this.urlInput.value = url;
+
+    // 強制以網頁瀏覽器模式開啟
+    if (forceWebMode) {
+      this.playWebPage(url);
+      this.manager.saveState();
+      return;
+    }
 
     // 0. 若為 YouTube 網址，直接啟用原生 YouTube 播放核心 (支援所有 1080p/4K、動畫番劇與實況)
     const ytId = extractYouTubeId(url);
@@ -216,7 +257,10 @@ class StreamSlot {
       });
 
       if (!res.success) {
-        this.showError(res.error || '串流解析失敗');
+        // 非直播串流或 Streamlink 不支援時，自動切換為網頁模式開啟
+        console.log(`[Slot ${this.slotNumber}] 非串流源，切換至網頁模式:`, res.error);
+        this.playWebPage(url);
+        this.manager.saveState();
         return;
       }
 
@@ -386,6 +430,100 @@ class StreamSlot {
     });
   }
 
+  playWebPage(url) {
+    this.destroyPlayers(true);
+    this.playType = 'webpage';
+    this.video.style.display = 'none';
+    this.ytContainer.style.display = 'block';
+    this.container.classList.add('is-web-mode');
+
+    // 切換底部控制列模式
+    if (this.webBackBtn) this.webBackBtn.classList.remove('hidden');
+    if (this.webFwdBtn) this.webFwdBtn.classList.remove('hidden');
+    if (this.playPauseBtn) this.playPauseBtn.classList.add('hidden');
+    if (this.vlcBtn) this.vlcBtn.classList.add('hidden');
+
+    this.showLoader('網頁載入中...');
+
+    const targetUrl = formatUrl(url);
+    this.originalUrl = targetUrl;
+    this.urlInput.value = targetUrl;
+    this.titleEl.textContent = targetUrl;
+    this.titleEl.title = targetUrl;
+    this.qualitySelect.innerHTML = '<option value="web">🌐 網頁模式</option>';
+
+    const webview = document.createElement('webview');
+    webview.id = `web-wv-${this.slotNumber}`;
+    webview.src = targetUrl;
+    webview.style.width = '100%';
+    webview.style.height = '100%';
+    webview.style.border = 'none';
+    webview.setAttribute('allowpopups', 'true');
+
+    this.ytWebview = webview;
+    this.ytContainer.innerHTML = '';
+    this.ytContainer.appendChild(webview);
+
+    webview.addEventListener('dom-ready', async () => {
+      this.hideOverlays();
+      const title = webview.getTitle();
+      if (title) {
+        this.titleEl.textContent = title;
+        this.titleEl.title = `${title} - ${webview.getURL()}`;
+      }
+      this.updatePlayState(true);
+
+      if (webview.setAudioMuted) {
+        webview.setAudioMuted(this.isMuted);
+      }
+
+      try {
+        await webview.executeJavaScript(`
+          (() => {
+            window.addEventListener('mouseenter', () => {
+              console.log('__erostream_mouseenter__');
+            });
+          })()
+        `);
+      } catch (e) {}
+    });
+
+    webview.addEventListener('page-title-updated', (e) => {
+      if (e.title) {
+        this.titleEl.textContent = e.title;
+        this.titleEl.title = `${e.title} - ${webview.getURL() || targetUrl}`;
+      }
+    });
+
+    webview.addEventListener('did-navigate', (e) => {
+      if (e.url) {
+        this.originalUrl = e.url;
+        this.urlInput.value = e.url;
+        this.manager.saveState();
+      }
+    });
+
+    webview.addEventListener('new-window', (e) => {
+      if (e.url) {
+        webview.loadURL(e.url);
+      }
+    });
+
+    webview.addEventListener('console-message', (e) => {
+      if (e.message === '__erostream_mouseenter__') {
+        if (this.manager.audioFocusFollow && this.originalUrl) {
+          this.manager.soloAudio(this.slotNumber);
+        }
+      }
+    });
+
+    webview.addEventListener('did-fail-load', (e) => {
+      if (e.errorCode !== -3) {
+        this.showError(`網頁載入失敗 (${e.errorDescription || e.errorCode})`);
+      }
+    });
+  }
+
   playDirectHls(streamUrl) {
     this.currentDirectUrl = streamUrl;
     this.destroyPlayers(false);
@@ -483,6 +621,12 @@ class StreamSlot {
   }
 
   destroyPlayers(stopBackend = true) {
+    this.container.classList.remove('is-web-mode');
+    if (this.webBackBtn) this.webBackBtn.classList.add('hidden');
+    if (this.webFwdBtn) this.webFwdBtn.classList.add('hidden');
+    if (this.playPauseBtn) this.playPauseBtn.classList.remove('hidden');
+    if (this.vlcBtn) this.vlcBtn.classList.remove('hidden');
+
     if (this.ytWebview) {
       try {
         this.ytWebview.src = 'about:blank';
@@ -515,7 +659,7 @@ class StreamSlot {
   }
 
   reload() {
-    if (this.playType === 'youtube' && this.ytWebview) {
+    if ((this.playType === 'youtube' || this.playType === 'webpage') && this.ytWebview) {
       this.ytWebview.reload();
       return;
     }
@@ -558,7 +702,7 @@ class StreamSlot {
   setVolume(vol) {
     this.volume = Math.max(0, Math.min(1, vol));
     this.video.volume = this.volume;
-    if (this.playType === 'youtube' && this.ytWebview) {
+    if ((this.playType === 'youtube' || this.playType === 'webpage') && this.ytWebview) {
       this.ytWebview.executeJavaScript(`
         (() => {
           const v = document.querySelector('video');
@@ -573,7 +717,7 @@ class StreamSlot {
   setMuted(muted) {
     this.isMuted = muted;
     this.video.muted = muted;
-    if (this.playType === 'youtube' && this.ytWebview) {
+    if ((this.playType === 'youtube' || this.playType === 'webpage') && this.ytWebview) {
       if (this.ytWebview.setAudioMuted) {
         this.ytWebview.setAudioMuted(muted);
       }
@@ -869,7 +1013,8 @@ class StreamManager {
     const data = {
       slots: this.slots.map((s) => ({
         url: s.originalUrl,
-        volume: s.volume
+        volume: s.volume,
+        playType: s.playType
       }))
     };
     localStorage.setItem('erostream_config', JSON.stringify(data));
@@ -885,7 +1030,11 @@ class StreamManager {
           if (this.slots[idx] && item.url) {
             this.slots[idx].urlInput.value = item.url;
             if (item.volume !== undefined) this.slots[idx].setVolume(item.volume);
-            this.slots[idx].load(item.url);
+            if (item.playType === 'webpage') {
+              this.slots[idx].load(item.url, null, true);
+            } else {
+              this.slots[idx].load(item.url);
+            }
           }
         });
       }
