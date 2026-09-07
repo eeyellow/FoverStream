@@ -4,7 +4,32 @@
   "description": "無邊框四視窗串流播放器 (VLC + Streamlink 架構)",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "dist": "electron-builder --win portable",
+    "dist:installer": "electron-builder --win nsis",
+    "dist:dir": "electron-builder --win dir"
+  },
+  "build": {
+    "appId": "com.erostream.app",
+    "productName": "EroStream",
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        "portable",
+        "nsis"
+      ]
+    },
+    "extraResources": [
+      {
+        "from": "resources/bin/streamlink",
+        "to": "bin/streamlink",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ]
   },
   "keywords": [
     "streamlink",
@@ -20,6 +45,7 @@
     "mpegts.js": "^1.8.2"
   },
   "devDependencies": {
-    "electron": "^41.0.1"
+    "electron": "^41.0.1",
+    "electron-builder": "^26.15.3"
   }
 }

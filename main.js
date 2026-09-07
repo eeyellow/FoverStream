@@ -34,11 +34,16 @@ let mainWindow = null;
 const activeServers = new Map();
 
 function getStreamlinkPath() {
-  const commonPaths = [
+  const possiblePaths = [
+    // 1. 打包後的 extraResources 路徑 (resources/bin/streamlink/bin/streamlink.exe)
+    path.join(process.resourcesPath, 'bin', 'streamlink', 'bin', 'streamlink.exe'),
+    // 2. 本地開發時的專案目錄 (resources/bin/streamlink/bin/streamlink.exe)
+    path.join(__dirname, 'resources', 'bin', 'streamlink', 'bin', 'streamlink.exe'),
+    // 3. 系統標準安裝路徑 (Fallback)
     'C:\\Program Files\\Streamlink\\bin\\streamlink.exe',
     'C:\\Program Files (x86)\\Streamlink\\bin\\streamlink.exe'
   ];
-  for (const p of commonPaths) {
+  for (const p of possiblePaths) {
     if (fs.existsSync(p)) return p;
   }
   return 'streamlink';
