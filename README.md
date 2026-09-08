@@ -1,4 +1,4 @@
-# EroStream - 無邊框四視窗串流播放器 (VLC + Streamlink 架構)
+# FoveaStream - 無邊框四視窗串流播放器 (VLC + Streamlink 架構)
 
 專為多直播同時收看設計的無邊框極簡播放器。整合 Streamlink 串流解析能力與硬體加速播放，支援 4 台直播無縫並行收看。
 

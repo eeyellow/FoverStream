@@ -1,4 +1,4 @@
 @echo off
-title EroStream
+title FoveaStream
 cd /d "%~dp0"
 npm start

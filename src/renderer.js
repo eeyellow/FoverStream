@@ -1,4 +1,4 @@
-// EroStream - Renderer Process (支援 direct HLS + 本機 MPEG-TS + YouTube 原生 + 網頁瀏覽器模式)
+// FoveaStream - Renderer Process (支援 direct HLS + 本機 MPEG-TS + YouTube 原生 + 網頁瀏覽器模式)
 
 function formatUrl(url) {
   if (!url) return '';
@@ -516,12 +516,12 @@ class StreamSlot {
 
             // 雙擊通知外層 Solo 全螢幕
             window.addEventListener('dblclick', () => {
-              console.log('__erostream_dblclick__');
+              console.log('__foveastream_dblclick__');
             });
 
             // 滑鼠移入通知音訊焦點
             window.addEventListener('mouseenter', () => {
-              console.log('__erostream_mouseenter__');
+              console.log('__foveastream_mouseenter__');
             });
 
             // 智慧自動略過廣告
@@ -550,9 +550,9 @@ class StreamSlot {
     });
 
     webview.addEventListener('console-message', (e) => {
-      if (e.message === '__erostream_dblclick__') {
+      if (e.message === '__foveastream_dblclick__') {
         this.manager.toggleSoloSlot(this.slotNumber);
-      } else if (e.message === '__erostream_mouseenter__') {
+      } else if (e.message === '__foveastream_mouseenter__') {
         if (this.manager.audioFocusFollow && this.originalUrl) {
           this.manager.soloAudio(this.slotNumber);
         }
@@ -611,7 +611,7 @@ class StreamSlot {
         await webview.executeJavaScript(`
           (() => {
             window.addEventListener('mouseenter', () => {
-              console.log('__erostream_mouseenter__');
+              console.log('__foveastream_mouseenter__');
             });
           })()
         `);
@@ -640,7 +640,7 @@ class StreamSlot {
     });
 
     webview.addEventListener('console-message', (e) => {
-      if (e.message === '__erostream_mouseenter__') {
+      if (e.message === '__foveastream_mouseenter__') {
         if (this.manager.audioFocusFollow && this.originalUrl) {
           this.manager.soloAudio(this.slotNumber);
         }
@@ -1396,7 +1396,7 @@ class StreamManager {
       }))
     };
     try {
-      localStorage.setItem('erostream_config', JSON.stringify(data));
+      localStorage.setItem('foveastream_config', JSON.stringify(data));
       if (window.api && window.api.saveConfig) {
         window.api.saveConfig(data);
       }
@@ -1412,7 +1412,7 @@ class StreamManager {
         data = await window.api.loadConfig();
       }
       if (!data) {
-        const raw = localStorage.getItem('erostream_config');
+        const raw = localStorage.getItem('foveastream_config') || localStorage.getItem('erostream_config');
         if (raw) data = JSON.parse(raw);
       }
       if (!data) {

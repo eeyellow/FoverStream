@@ -157,7 +157,7 @@ function createWindow() {
     minHeight: 500,
     frame: false,
     backgroundColor: '#0c0d14',
-    title: 'EroStream - Quad Stream Player',
+    title: 'FoveaStream - Quad Stream Player',
     show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -291,8 +291,9 @@ ipcMain.handle('window:isFullScreen', () => {
   return mainWindow ? mainWindow.isFullScreen() : false;
 });
 
-// 設定檔儲存與讀取 (userData/erostream_config.json)
-const configFilePath = path.join(app.getPath('userData'), 'erostream_config.json');
+// 設定檔儲存與讀取 (userData/foveastream_config.json，相容舊版 erostream_config.json)
+const configFilePath = path.join(app.getPath('userData'), 'foveastream_config.json');
+const legacyConfigFilePath = path.join(app.getPath('userData'), 'erostream_config.json');
 
 ipcMain.handle('config:save', async (event, data) => {
   try {
@@ -309,6 +310,12 @@ ipcMain.handle('config:load', async () => {
     if (fs.existsSync(configFilePath)) {
       const content = await fs.promises.readFile(configFilePath, 'utf-8');
       return JSON.parse(content);
+    }
+    if (fs.existsSync(legacyConfigFilePath)) {
+      const content = await fs.promises.readFile(legacyConfigFilePath, 'utf-8');
+      const data = JSON.parse(content);
+      await fs.promises.writeFile(configFilePath, JSON.stringify(data, null, 2), 'utf-8');
+      return data;
     }
   } catch (err) {
     console.error('讀取設定檔失敗:', err);
