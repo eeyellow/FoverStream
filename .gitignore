@@ -30,7 +30,19 @@ tmp/
 
 # Environment & local credentials
 .env
-.env*.local
+.env.*
+!.env.example
+*.pem
+*.key
+*.cert
+*.cer
+*.crt
+*.pfx
+*.p12
+*.token
+credentials.json
+secrets.json
+*config.local.json
 
 # IDE & Editor files
 .vscode/*

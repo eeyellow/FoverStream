@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, session, net } = require('electron');
+const { app, BrowserWindow, ipcMain, session, net, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { execFile, spawn } = require('child_process');
@@ -81,6 +81,11 @@ function startSlotServer(slotId, url, quality = 'best') {
   stopSlotServer(slotId);
   const streamlinkBin = getStreamlinkPath();
 
+  if (typeof url !== 'string' || !url.trim() || url.trim().startsWith('-')) {
+    return Promise.resolve({ success: false, error: '不合法的串流網址' });
+  }
+  const safeQuality = (typeof quality === 'string' && !quality.startsWith('-')) ? quality : 'best';
+
   return new Promise((resolve) => {
     let resolved = false;
     const child = spawn(streamlinkBin, [
@@ -91,11 +96,12 @@ function startSlotServer(slotId, url, quality = 'best') {
       '--stream-segment-threads', '3',
       '--ringbuffer-size', '32M',
       '--http-timeout', '20',
-      url,
-      quality
+      '--',
+      url.trim(),
+      safeQuality
     ]);
 
-    activeServers.set(slotId, { child, url, quality, serverUrl: null });
+    activeServers.set(slotId, { child, url: url.trim(), quality: safeQuality, serverUrl: null });
 
     const timeout = setTimeout(() => {
       if (!resolved) {
@@ -192,6 +198,23 @@ function createWindow() {
 
   mainWindow.loadFile(path.join(__dirname, 'src', 'index.html'));
 
+  // 防止主視窗被重導向至外部未信任頁面
+  mainWindow.webContents.on('will-navigate', (event, navigationUrl) => {
+    const parsed = new URL(navigationUrl);
+    if (parsed.protocol !== 'file:') {
+      event.preventDefault();
+      shell.openExternal(navigationUrl);
+    }
+  });
+
+  // 攔截並防止未受控的新視窗開啟
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      shell.openExternal(url);
+    }
+    return { action: 'deny' };
+  });
+
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
   });
@@ -215,6 +238,25 @@ function createWindow() {
 
 app.whenReady().then(() => {
   createWindow();
+
+  // 安全防護：嚴格限制任何 webview 的權限，確保 contextIsolation 與停用 nodeIntegration
+  app.on('web-contents-created', (event, contents) => {
+    contents.on('will-attach-webview', (waEvent, webPreferences) => {
+      delete webPreferences.preload;
+      delete webPreferences.preloadURL;
+      webPreferences.nodeIntegration = false;
+      webPreferences.nodeIntegrationInSubFrames = false;
+      webPreferences.contextIsolation = true;
+      webPreferences.allowRunningInsecureContent = false;
+    });
+
+    contents.setWindowOpenHandler(({ url }) => {
+      if (url.startsWith('http://') || url.startsWith('https://')) {
+        shell.openExternal(url);
+      }
+      return { action: 'deny' };
+    });
+  });
 
   app.on('second-instance', () => {
     if (mainWindow) {
@@ -327,10 +369,15 @@ ipcMain.handle('config:load', async () => {
 ipcMain.handle('streamlink:resolve', async (event, { url, preferredQuality = 'best', slotId = 1 }) => {
   const streamlinkBin = getStreamlinkPath();
 
+  if (typeof url !== 'string' || !url.trim() || url.trim().startsWith('-')) {
+    return { success: false, error: '不合法的串流網址' };
+  }
+  const safeQuality = (typeof preferredQuality === 'string' && !preferredQuality.startsWith('-')) ? preferredQuality : 'best';
+
   return new Promise((resolve) => {
     execFile(
       streamlinkBin,
-      ['--json', url],
+      ['--json', '--', url.trim()],
       { timeout: 20000, maxBuffer: 10 * 1024 * 1024 },
       async (err, stdout, stderr) => {
         if (err) {
@@ -348,14 +395,14 @@ ipcMain.handle('streamlink:resolve', async (event, { url, preferredQuality = 'be
           }
 
           // 若 --json 失敗，嘗試啟動本機伺服器直連
-          const serverRes = await startSlotServer(slotId, url, preferredQuality);
+          const serverRes = await startSlotServer(slotId, url.trim(), safeQuality);
           if (serverRes.success) {
             resolve({
               success: true,
               metadata: { title: url, author: '' },
-              streams: { [preferredQuality]: { type: 'mpegts' } },
-              qualities: [preferredQuality],
-              chosenQuality: preferredQuality,
+              streams: { [safeQuality]: { type: 'mpegts' } },
+              qualities: [safeQuality],
+              chosenQuality: safeQuality,
               playType: 'mpegts',
               directUrl: serverRes.serverUrl,
               needsServer: true
@@ -381,7 +428,7 @@ ipcMain.handle('streamlink:resolve', async (event, { url, preferredQuality = 'be
           }
 
           const qualities = Object.keys(parsed.streams);
-          const chosenQuality = parsed.streams[preferredQuality] ? preferredQuality : 'best';
+          const chosenQuality = parsed.streams[safeQuality] ? safeQuality : 'best';
           const targetStream = parsed.streams[chosenQuality] || parsed.streams[qualities[0]];
 
           // 判斷是否為 direct HLS URL 或是需要 Streamlink 轉發的 hls-multi / segmented 串流
@@ -400,7 +447,7 @@ ipcMain.handle('streamlink:resolve', async (event, { url, preferredQuality = 'be
             });
           } else {
             // 如 Chaturbate 的 hls-multi：沒有靜態 direct URL，由 Streamlink 本機伺服器轉成 MPEG-TS
-            const serverRes = await startSlotServer(slotId, url, chosenQuality);
+            const serverRes = await startSlotServer(slotId, url.trim(), chosenQuality);
             if (!serverRes.success) {
               resolve({ success: false, error: serverRes.error });
               return;
@@ -459,10 +506,16 @@ ipcMain.handle('vlc:open', async (event, { url, originalUrl, quality }) => {
   const vlcPath = getVlcPath();
   const streamlinkBin = getStreamlinkPath();
 
+  const targetUrl = (originalUrl || url || '').trim();
+  if (!targetUrl || targetUrl.startsWith('-')) {
+    return { success: false, error: '不合法的播放網址' };
+  }
+  const safeQuality = (typeof quality === 'string' && !quality.startsWith('-')) ? quality : 'best';
+
   // 若為 direct m3u8 或本機伺服器 http://127.0.0.1:...
   if (url && (url.startsWith('http://127.0.0.1') || url.endsWith('.m3u8') || url.includes('.m3u8?'))) {
     try {
-      const child = spawn(vlcPath, [url], { detached: true, stdio: 'ignore' });
+      const child = spawn(vlcPath, ['--', url.trim()], { detached: true, stdio: 'ignore' });
       child.unref();
       return { success: true };
     } catch (e) {
@@ -472,7 +525,7 @@ ipcMain.handle('vlc:open', async (event, { url, originalUrl, quality }) => {
 
   // 否則直接透過 streamlink 呼叫 VLC 播放原始網址
   try {
-    const child = spawn(streamlinkBin, [originalUrl || url, quality || 'best'], {
+    const child = spawn(streamlinkBin, ['--', targetUrl, safeQuality], {
       detached: true,
       stdio: 'ignore'
     });
