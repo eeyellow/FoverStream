@@ -1,10 +1,12 @@
 {
   "name": "foveastream",
-  "version": "1.0.0",
-  "description": "無邊框四視窗串流播放器 (VLC + Streamlink 架構)",
-  "main": "main.js",
+  "version": "1.1.0",
+  "description": "無邊框四視窗串流播放器 (Streamlink + 多核心硬體加速架構)",
+  "main": "src/main/index.js",
   "scripts": {
     "start": "electron .",
+    "test": "node --test tests/*.test.js",
+    "test:smoke": "electron tests/electron.smoke.js",
     "dist": "electron-builder --win portable",
     "dist:installer": "electron-builder --win nsis",
     "dist:dir": "electron-builder --win dir"
@@ -15,6 +17,10 @@
     "directories": {
       "output": "dist"
     },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
     "win": {
       "target": [
         "portable",
@@ -22,6 +28,13 @@
       ]
     },
     "extraResources": [
+      {
+        "from": "streamlink-plugins",
+        "to": "streamlink-plugins",
+        "filter": [
+          "*.py"
+        ]
+      },
       {
         "from": "resources/bin/streamlink",
         "to": "bin/streamlink",
@@ -47,5 +60,9 @@
   "devDependencies": {
     "electron": "^41.0.1",
     "electron-builder": "^26.15.3"
+  },
+  "allowScripts": {
+    "electron": true,
+    "electron-winstaller": true
   }
 }

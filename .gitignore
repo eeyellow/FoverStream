@@ -12,6 +12,11 @@ resources/bin/
 *.dmg
 *.AppImage
 
+# Python (Streamlink sideloaded plugins)
+__pycache__/
+*.py[cod]
+*$py.class
+
 # Logs
 logs/
 *.log

@@ -1,0 +1,86 @@
+/* ==================== 串流主網格 (Grid) ==================== */
+.grid-container {
+  flex: 1;
+  display: grid;
+  padding: 4px;
+  gap: 4px;
+  background: #000;
+  position: relative;
+  overflow: hidden;
+}
+
+/* 2x2 四分割模式 */
+.grid-container.mode-2x2 {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+
+/* 1+3 焦點模式 (左側 1 主畫面 + 右側 3 副畫面) */
+.grid-container.mode-1p3 {
+  grid-template-columns: 2.2fr 1fr;
+  grid-template-rows: repeat(3, 1fr);
+}
+
+.grid-container.mode-1p3 .stream-slot.is-primary {
+  grid-column: 1 / 2;
+  grid-row: 1 / 4;
+}
+
+.grid-container.mode-1p3 .stream-slot:not(.is-primary) {
+  grid-column: 2 / 3;
+}
+
+/* 上1+3 焦點模式 (上方 1 主畫面 + 下方 3 副畫面平行排列) */
+.grid-container.mode-top1p3 {
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: 2.3fr 1fr;
+}
+
+.grid-container.mode-top1p3 .stream-slot.is-primary {
+  grid-column: 1 / 4;
+  grid-row: 1 / 2;
+}
+
+.grid-container.mode-top1p3 .stream-slot:not(.is-primary) {
+  grid-row: 2 / 3;
+}
+
+/* 下1+3 焦點模式 (上方 3 副畫面平行排列 + 下方 1 主畫面) */
+.grid-container.mode-bottom1p3 {
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: 1fr 2.3fr;
+}
+
+.grid-container.mode-bottom1p3 .stream-slot.is-primary {
+  grid-column: 1 / 4;
+  grid-row: 2 / 3;
+}
+
+.grid-container.mode-bottom1p3 .stream-slot:not(.is-primary) {
+  grid-row: 1 / 2;
+}
+
+/* 單台全螢幕放大 (Solo Mode) */
+.stream-slot.solo,
+.grid-container.mode-2x2 .stream-slot.solo,
+.grid-container.mode-1p3 .stream-slot.solo,
+.grid-container.mode-top1p3 .stream-slot.solo,
+.grid-container.mode-bottom1p3 .stream-slot.solo {
+  position: absolute !important;
+  top: 4px !important;
+  left: 4px !important;
+  right: 4px !important;
+  bottom: 4px !important;
+  width: auto !important;
+  height: auto !important;
+  grid-column: 1 / -1 !important;
+  grid-row: 1 / -1 !important;
+  z-index: 60 !important;
+  border-radius: 6px;
+}
+
+/* Solo 模式下將背景非焦點台隱藏並停用互動 */
+.grid-container.has-solo .stream-slot:not(.solo) {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
